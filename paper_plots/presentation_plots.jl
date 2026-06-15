@@ -3,6 +3,10 @@ using Distributions
 using CairoMakie
 using FileIO
 using Random
+using LinearAlgebra
+
+R(a) = [cos(a) sin(a); -sin(a) cos(a)]
+rotate(m, a) = Symmetric(R(a) * m * R(a)')
 
 function banana(;N=10)
     Random.seed!(42)
@@ -10,9 +14,10 @@ function banana(;N=10)
     ws = rand(C)
     ws ./= sum(ws)
 
-    ms = [[0.0, 0.0], [-1.5, -1.0], [1.5, -1.0]]
-    vs = [[1 0; 0 0.3], [0.4 0.1; 0.1 0.8], [0.4 -0.1; -0.1 0.8]]
-    target = MixtureModel([MvNormal(m, v) for (m, v) in zip(ms, vs)])
+    ms = [[1.7, -4.1], [0.4, -2.3], [0.0, 0.0], [0.4, 2.3], [1.7, 4.1]] ./ 2
+    vs = ([[2.4 0; 0 0.75], [1.9 0; 0 1.1], [1.2 0; 0 1.4]]./2).^2
+    vs_rot = [rotate(vs[1], pi/6), rotate(vs[2], pi/3), vs[3], rotate(vs[2], -pi/3), rotate(vs[1], -pi/6)]
+    target = MixtureModel([MvNormal(m, v) for (m, v) in zip(ms, vs_rot)])
     
     dirs = uniform_directions_2d(1000)
     X, _ = draw_samples(target, N, dirs, stop_cond=max_iters_and_small_delta(10000, 1e-8), N_lut=200) 
@@ -44,9 +49,12 @@ function pineapple(;N=10)
     ws = rand(C)
     ws ./= sum(ws)
 
-    ms = [[0.0, 0.0], [-1.5, -1.0], [1.5, -1.0], [0.0, -3.0]]
-    vs = [[1 0; 0 0.3], [0.4 0.1; 0.1 0.8], [0.4 -0.1; -0.1 0.8], [2.0 0; 0 3.0]]
-    target = MixtureModel([MvNormal(m, v) for (m, v) in zip(ms, vs)], [0.1, 0.1, 0.1, 0.7])
+    ms = [[0.0, -2.0], [-4.5, 3.0], [-3, 6.0], [3, 6.0], [4.5, 3.0]] ./ 2
+    vs = ([[1.5 0; 0 2], [2.3 0; 0 1.0]]./2).^2
+    
+    vs_rot = [vs[1], rotate(vs[2], pi/8), rotate(vs[2], pi/4), rotate(vs[2], -pi/4), rotate(vs[2], -pi/8)]
+
+    target = MixtureModel([MvNormal(m, v) for (m, v) in zip(ms, vs_rot)], [0.4; fill((1-0.4)/4, 4) ])
     
     dirs = uniform_directions_2d(1000)
     X, _ = draw_samples(target, N, dirs, stop_cond=max_iters_and_small_delta(10000, 1e-8), N_lut=200) 
@@ -55,8 +63,8 @@ function pineapple(;N=10)
     f = Figure(width=800, height=400)
     ax = Axis(f[1, 1], aspect=DataAspect(), xlabel=L"x_1 \rightarrow", ylabel=L"x_2 \rightarrow", 
                 xlabelsize=25, ylabelsize=25, xticklabelsize=20, yticklabelsize=20)
-    xs = -5:0.1:5
-    ys = -5:0.1:5
+    xs = -6:0.1:6
+    ys = -5:0.1:7
     zs = [Distributions.pdf(target, [x, y]) for x in xs, y in ys]
     cp = contourf!(ax,xs, ys, sqrt.(zs), colormap=:viridis)
     Colorbar(f[1, 2], cp, label = L"\text{pdf}", labelsize=20, ticklabelsize=20)
@@ -64,6 +72,7 @@ function pineapple(;N=10)
     resize_to_layout!(f)
     save("./paper_plots/plots/banana.svg", f)
     
+    # scatter!(ax, [m[1] for m in ms], [m[2] for m in ms], markersize=10, color=:red)
     scatter!(ax, X, markersize=10, color=:red)
     rowsize!(f.layout, 1, 260)
     resize_to_layout!(f)    
@@ -73,8 +82,8 @@ function pineapple(;N=10)
 end
 
 function generate_plots()
-    banana(;N=10)
-    pineapple(;N=10)
+    # banana(;N=20)
+    pineapple(;N=20)
 end
 
 generate_plots()
