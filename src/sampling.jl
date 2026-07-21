@@ -70,30 +70,35 @@ function pcd_sample(projections::Projections, init_samples, stop_condition; use_
     end
 
     iters = 0
+    first_iteration = true
 
     while !stop_condition(delta_x)
-        @tasks for i in eachindex(directions)
-            @set ntasks=nthreads           
+        if !first_iteration
+            @tasks for i in eachindex(directions)
+                @set ntasks=nthreads           
 
-            mul!(@view(proj_X[:, i])', directions[i]', X)
-            sp = @view(proj_sp[:, i])
+                mul!(@view(proj_X[:, i])', directions[i]', X)
+                sp = @view(proj_sp[:, i])
 
-            for j in eachindex(sp)
-                k = 0
-                while j+k < length(sp) && j+k > 0 && proj_X[sp[j+k], i] > proj_X[sp[j+k+1], i]
-                    sp[j+k], sp[j+k+1] = sp[j+k+1], sp[j+k]
-                    proj_rank[sp[j+k], i] -= 1
-                    proj_rank[sp[j+k+1], i] += 1
-                    k -= 1
+                for j in eachindex(sp)
+                    k = 0
+                    while j+k < length(sp) && j+k > 0 && proj_X[sp[j+k], i] > proj_X[sp[j+k+1], i]
+                        sp[j+k], sp[j+k+1] = sp[j+k+1], sp[j+k]
+                        proj_rank[sp[j+k], i] -= 1
+                        proj_rank[sp[j+k+1], i] += 1
+                        k -= 1
+                    end
                 end
             end
         end
+
 
         if use_local
             local_update!(X, delta_x, projections, proj_X, proj_rank; nthreads)
         else
             newton_step!(X, delta_x, projections, proj_X, proj_rank; nthreads)
         end
+        first_iteration = false
         iters += 1
     end
 
