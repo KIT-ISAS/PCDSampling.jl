@@ -56,28 +56,30 @@ function pcd_sample(projections::Projections, init_samples, stop_condition; use_
     X = init_samples
     directions = get_dirs(projections)
 
+    N = size(X, 2)
+    K = length(projections)
+
     delta_x = ones(eltype(X), size(X))
 
-    proj_X = zeros(eltype(X), size(X, 2), length(projections))
-    proj_sp = zeros(Int, size(X, 2), length(projections))
-    proj_rank = zeros(Int, size(X, 2), length(projections))
-
-    # TODO: For weighted samples maintain cumsum of weights instead of sample rank
-    for (i, dir) in enumerate(directions)
-        mul!(@view(proj_X[:, i:i])', dir', X)
-        sortperm!(@view(proj_sp[:, i]), @view(proj_X[:, i]))
-        proj_rank[:, i] .= invperm(@view(proj_sp[:, i]))
-    end
+    proj_X = Matrix{eltype(X)}(undef, N, K)
+    proj_sp = Matrix{Int}(undef, N, K)
+    proj_rank = Matrix{Int}(undef, N, K)
 
     iters = 0
     first_iteration = true
 
     while !stop_condition(delta_x)
-        if !first_iteration
-            @tasks for i in eachindex(directions)
-                @set ntasks=nthreads           
+        @tasks for i in eachindex(directions)
+            @set ntasks=nthreads
 
-                mul!(@view(proj_X[:, i])', directions[i]', X)
+            dir = directions[i]
+
+            mul!(@view(proj_X[:, i:i])', dir', X)
+
+            if first_iteration
+                sortperm!(@view(proj_sp[:, i]), @view(proj_X[:, i]))
+                proj_rank[:, i] .= invperm(@view(proj_sp[:, i]))
+            else
                 sp = @view(proj_sp[:, i])
 
                 for j in eachindex(sp)
@@ -91,7 +93,6 @@ function pcd_sample(projections::Projections, init_samples, stop_condition; use_
                 end
             end
         end
-
 
         if use_local
             local_update!(X, delta_x, projections, proj_X, proj_rank; nthreads)
