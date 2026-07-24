@@ -36,22 +36,6 @@ function newton_step!(X, delta_x, projections, proj_X, proj_rank; nthreads=Threa
     end
 end
 
-# function local_update!(X, delta_x, projections, proj_X, proj_rank; nthreads=Threads.nthreads())
-#     @tasks for i in axes(X, 2)
-#         @set ntasks=nthreads           
-#         delta_x[:, i] .= 0.0
-#         @inbounds for (m, (target, dir)) in enumerate(projections)
-#             step, hess_step = cvm_grad_hess(target, proj_X[i, m], proj_rank[i, m], size(X, 2))
-            
-#             for j in axes(delta_x, 1)
-#                 delta_x[j, i] += dir[j] * (step / max(hess_step, 1e-3))
-#             end
-#         end
-#         delta_x[:, i] ./= length(projections)
-#         @views X[:, i] .+= delta_x[:, i]
-#     end
-# end
-
 function local_update!(X, delta_x, projections, proj_X, proj_rank; nthreads=Threads.nthreads())
     N = size(X, 2)
     inv_K = inv(length(projections))
