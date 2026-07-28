@@ -107,9 +107,24 @@ function pcd_sample_gpu(luts, cu_directions::CuArray, init_samples::CuArray, sto
     # Reduction layout
     warps_per_block = 16
     t_dims_red = (warps_per_block*32,)
-    b_dims_grad_red = (ceil(Int, d*L / warps_per_block),)
-    nvals_tri = d * (d+1) ÷ 2 * L
-    b_dims_hess_red = (ceil(Int, nvals_tri / warps_per_block),)
+
+    # b_dims_grad_red = (ceil(Int, d*L / warps_per_block),)
+    # nvals_tri = d * (d+1) ÷ 2 * L
+    # b_dims_hess_red = (ceil(Int, nvals_tri / warps_per_block),)
+
+    # Local update: gradient only
+    nvals_grad = d * L
+    b_dims_grad_red = (cld(nvals_grad, warps_per_block),)
+
+    # Global update: gradient and lower-triangular Hessian
+    vals_grad_per_sample = d
+    vals_hess_per_sample = d * (d + 1) ÷ 2
+    vals_grad_hess_per_sample =
+        vals_grad_per_sample + vals_hess_per_sample
+
+    nvals_grad_hess = vals_grad_hess_per_sample * L
+    b_dims_grad_hess_red =
+        (cld(nvals_grad_hess, warps_per_block),)
 
     # Initialize sorting
     @cuda threads=threadSize blocks=blockSize kernel_compute_radon_projection!(
@@ -143,11 +158,43 @@ function pcd_sample_gpu(luts, cu_directions::CuArray, init_samples::CuArray, sto
 
         @cuda threads=t_dims_red blocks=b_dims_grad_red reduce_kernel_grad!(delta_d, grad_d, cu_directions)
     
-        if !use_local
-            @cuda threads=t_dims_red blocks=b_dims_hess_red reduce_kernel_hess!(hess_accum_d, hess_d, cu_directions)
+        # if !use_local
+        #     @cuda threads=t_dims_red blocks=b_dims_hess_red reduce_kernel_hess!(hess_accum_d, hess_d, cu_directions)
             
-            d_pivot, info, d_LU = CUDA.CUBLAS.getrf_strided_batched!(hess_accum_d, true)
-            info2, delta_d = CUDA.CUBLAS.getrs_strided_batched!('N', d_LU, reshape(delta_d, (d, 1, L)), d_pivot)
+        #     d_pivot, info, d_LU = CUDA.CUBLAS.getrf_strided_batched!(hess_accum_d, true)
+        #     info2, delta_d = CUDA.CUBLAS.getrs_strided_batched!('N', d_LU, reshape(delta_d, (d, 1, L)), d_pivot)
+        #     delta_d = reshape(delta_d, d, L)
+        # end
+
+        if use_local
+            @cuda threads=t_dims_red blocks=b_dims_grad_red reduce_kernel_grad!(
+                delta_d,
+                grad_d,
+                cu_directions,
+            )
+        else
+            @cuda threads=t_dims_red blocks=b_dims_grad_hess_red reduce_kernel_grad_hess!(
+                delta_d,
+                hess_accum_d,
+                grad_d,
+                hess_d,
+                cu_directions,
+            )
+
+            d_pivot, info, d_LU =
+                CUDA.CUBLAS.getrf_strided_batched!(
+                    hess_accum_d,
+                    true,
+                )
+
+            info2, delta_d =
+                CUDA.CUBLAS.getrs_strided_batched!(
+                    'N',
+                    d_LU,
+                    reshape(delta_d, (d, 1, L)),
+                    d_pivot,
+                )
+
             delta_d = reshape(delta_d, d, L)
         end
 
@@ -378,6 +425,85 @@ function reduce_kernel_grad!(grad, vproj_grad, proj)
     if lane == 1
         grad[d_idx, i] = val / K
     end
+    return
+end
+
+function reduce_kernel_grad_hess!(
+    grad,
+    hess,
+    vproj_grad,
+    vpdf,
+    proj,
+)
+    CUDA.assume(warpsize() == 32)
+
+    D, K = size(proj)
+
+    tid = threadIdx().x
+    wid, lane = fldmod1(tid, warpsize())
+    warps_per_block = blockDim().x ÷ warpsize()
+
+    vals_grad_per_sample = D
+    vals_hess_per_sample = D * (D + 1) ÷ 2
+    vals_per_sample =
+        vals_grad_per_sample + vals_hess_per_sample
+
+    # Zero-based global warp index.
+    val_idx =
+        (blockIdx().x - 1) * warps_per_block + wid - 1
+
+    # Sample index and output index within the sample.
+    i = val_idx ÷ vals_per_sample + 1
+    local_idx = mod(val_idx, vals_per_sample)
+
+    if i > size(vproj_grad, 1)
+        return
+    end
+
+    T = eltype(grad)
+    val = zero(T)
+
+    if local_idx < vals_grad_per_sample
+        # -------------------------------------------------
+        # Gradient task
+        # -------------------------------------------------
+        d_idx = local_idx + 1
+
+        @inbounds for k in lane:warpsize():K
+            val +=
+                vproj_grad[i, k] *
+                proj[d_idx, k]
+        end
+
+        val = CUDA.CUDACore.reduce_warp(+, val)
+
+        if lane == 1
+            grad[d_idx, i] = val / K
+        end
+    else
+        # -------------------------------------------------
+        # Hessian task
+        # -------------------------------------------------
+        hess_idx = local_idx - vals_grad_per_sample
+        d1, d2 = lower_index(hess_idx, D)
+
+        @inbounds for k in lane:warpsize():K
+            val +=
+                vpdf[i, k] *
+                proj[d1, k] *
+                proj[d2, k]
+        end
+
+        val = CUDA.CUDACore.reduce_warp(+, val)
+
+        if lane == 1
+            hess_value = val / K
+
+            hess[d1, d2, i] = hess_value
+            hess[d2, d1, i] = hess_value
+        end
+    end
+
     return
 end
 
