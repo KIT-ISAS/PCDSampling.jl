@@ -108,10 +108,6 @@ function pcd_sample_gpu(luts, cu_directions::CuArray, init_samples::CuArray, sto
     warps_per_block = 16
     t_dims_red = (warps_per_block*32,)
 
-    # b_dims_grad_red = (ceil(Int, d*L / warps_per_block),)
-    # nvals_tri = d * (d+1) ÷ 2 * L
-    # b_dims_hess_red = (ceil(Int, nvals_tri / warps_per_block),)
-
     # Local update: gradient only
     nvals_grad = d * L
     b_dims_grad_red = (cld(nvals_grad, warps_per_block),)
@@ -156,45 +152,13 @@ function pcd_sample_gpu(luts, cu_directions::CuArray, init_samples::CuArray, sto
                 cu_projections, cu_inv_sort_idx,
                 cu_lut_xs, cu_lut_cdf, cu_lut_pdf)
 
-        @cuda threads=t_dims_red blocks=b_dims_grad_red reduce_kernel_grad!(delta_d, grad_d, cu_directions)
-    
-        # if !use_local
-        #     @cuda threads=t_dims_red blocks=b_dims_hess_red reduce_kernel_hess!(hess_accum_d, hess_d, cu_directions)
-            
-        #     d_pivot, info, d_LU = CUDA.CUBLAS.getrf_strided_batched!(hess_accum_d, true)
-        #     info2, delta_d = CUDA.CUBLAS.getrs_strided_batched!('N', d_LU, reshape(delta_d, (d, 1, L)), d_pivot)
-        #     delta_d = reshape(delta_d, d, L)
-        # end
-
         if use_local
-            @cuda threads=t_dims_red blocks=b_dims_grad_red reduce_kernel_grad!(
-                delta_d,
-                grad_d,
-                cu_directions,
-            )
+            @cuda threads=t_dims_red blocks=b_dims_grad_red reduce_kernel_grad!(delta_d, grad_d, cu_directions)
         else
-            @cuda threads=t_dims_red blocks=b_dims_grad_hess_red reduce_kernel_grad_hess!(
-                delta_d,
-                hess_accum_d,
-                grad_d,
-                hess_d,
-                cu_directions,
-            )
+            @cuda threads=t_dims_red blocks=b_dims_grad_hess_red reduce_kernel_grad_hess!(delta_d, hess_accum_d, grad_d, hess_d, cu_directions)
 
-            d_pivot, info, d_LU =
-                CUDA.CUBLAS.getrf_strided_batched!(
-                    hess_accum_d,
-                    true,
-                )
-
-            info2, delta_d =
-                CUDA.CUBLAS.getrs_strided_batched!(
-                    'N',
-                    d_LU,
-                    reshape(delta_d, (d, 1, L)),
-                    d_pivot,
-                )
-
+            d_pivot, info, d_LU = CUDA.CUBLAS.getrf_strided_batched!(hess_accum_d, true)
+            info2, delta_d = CUDA.CUBLAS.getrs_strided_batched!('N', d_LU, reshape(delta_d, (d, 1, L)), d_pivot)
             delta_d = reshape(delta_d, d, L)
         end
 
