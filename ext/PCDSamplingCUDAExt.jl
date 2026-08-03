@@ -392,13 +392,7 @@ function reduce_kernel_grad!(grad, vproj_grad, proj)
     return
 end
 
-function reduce_kernel_grad_hess!(
-    grad,
-    hess,
-    vproj_grad,
-    vpdf,
-    proj,
-)
+function reduce_kernel_grad_hess!(grad, hess, vproj_grad, vpdf, proj)
     CUDA.assume(warpsize() == 32)
 
     D, K = size(proj)
