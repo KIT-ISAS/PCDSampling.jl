@@ -422,9 +422,6 @@ function reduce_kernel_grad_hess!(grad, hess, vproj_grad, vpdf, proj)
     val = zero(T)
 
     if local_idx < vals_grad_per_sample
-        # -------------------------------------------------
-        # Gradient task
-        # -------------------------------------------------
         d_idx = local_idx + 1
 
         @inbounds for k in lane:warpsize():K
@@ -439,9 +436,6 @@ function reduce_kernel_grad_hess!(grad, hess, vproj_grad, vpdf, proj)
             grad[d_idx, i] = val / K
         end
     else
-        # -------------------------------------------------
-        # Hessian task
-        # -------------------------------------------------
         hess_idx = local_idx - vals_grad_per_sample
         d1, d2 = lower_index(hess_idx, D)
 
